@@ -11,12 +11,9 @@ M = []
 #key:word/tag(string), value: position in matrix
 word_to_loc = {}
 tag_to_loc = {}
+loc_to_tag = {}
 new_word_pointer = 0
 new_tag_pointer = 0
-
-#recod each word's total number
-#key: word's position, value: total number of this word
-wordloc_to_number = {}
 
 #recod each tag's total number
 #key: tag's position, value: total number of this tag
@@ -40,9 +37,6 @@ def debug_location():
     print("----------test tag's location-----------")
     print(tag_to_loc)
     print("\n")
-    # print("----------test each word's total number-----------")
-    # print(wordloc_to_number)
-    # print("\n")
     # print("----------test each tag's total number-----------")
     # print(tagloc_to_number)
     # print("\n")
@@ -78,6 +72,7 @@ def training(training_list):
     global M
     global word_to_loc
     global tag_to_loc
+    global loc_to_tag
     global new_word_pointer
     global new_tag_pointer
     global total_word
@@ -96,21 +91,19 @@ def training(training_list):
 
         for string_pair in intermediate_string:
             if string_pair == "":
-                print("END!!!!!")
+                print("----------parsed the end of this training file----------")
                 continue
             word, tag = string_pair.split(" : ")
             # print (word)
             if not word in word_to_loc:
                 word_to_loc[word] = new_word_pointer
-                wordloc_to_number[new_word_pointer] = 1
                 new_word_pointer += 1
                 total_word += 1
-            else:
-                wordloc_to_number[word_to_loc[word]] += 1 #increment by 1
             training_words.append(word)
             # print (tag)
             if not tag in tag_to_loc:
                 tag_to_loc[tag] = new_tag_pointer
+                loc_to_tag[new_tag_pointer] = tag
                 tagloc_to_number[new_tag_pointer] = 1
                 new_tag_pointer += 1
                 total_tag += 1
@@ -118,13 +111,13 @@ def training(training_list):
                 tagloc_to_number[tag_to_loc[tag]] += 1 #increment by 1
             training_tags.append(tag)
             test_i += 1
-            if test_i == 5:
-                break
+            # if test_i == 5:
+            #     break
         assert len(training_words) == len(training_tags)
         word_queue.append(training_words)
         tag_queue.append(training_tags)
 
-    debug_location()
+    # debug_location()
     #prepare matrix
     I.extend([0] * total_tag)
     T = [[0]* total_tag for i in range(total_tag)] #row:tag, col: tag
@@ -153,14 +146,14 @@ def training(training_list):
             T[tag_pos][tag_end] += 1
 
     # normalize T and M
-    print(T)
+    # print(T)
     for i, row in enumerate(T):
         T_normalization_constant = sum(row)
         for j, col in enumerate(row):
             if col == 0:
                 continue
             T[i][j] = col / T_normalization_constant
-    print(T)
+    # print(T)
     # print(M)
     for i, row in enumerate(M):
         M_normalization_constant = sum(row)
@@ -171,7 +164,105 @@ def training(training_list):
     # print(M)
     #debug_matrix()
 
-# def prepare_viterbi(test_file):
+def prepare_viterbi(test_file, word_result, tag_result):
+    global word_to_loc
+    testing_read = open(test_file, 'r')
+    testing_string = testing_read.read()
+    testing_read.close()
+    intermediate_string = testing_string.split("\n")
+    # print(intermediate_string)
+    valid_sentence = []
+    for word in intermediate_string:
+        if word == "":
+            print("----------the end of testing file-----------")
+            break
+        if not word in word_to_loc:
+            print("-----------not seen in training!-----------")
+            return
+        valid_sentence.append(word)
+        word_result.append(word)
+        if word == "." or word == "?" or word == "!": #symbol of terminating a sentence
+            # print(valid_sentence)
+            sentence_tag = viterbi(valid_sentence)
+            tag_result.extend(sentence_tag)
+            valid_sentence = []
+    if not len(valid_sentence) == 0:
+        print("----------no termination at the end-----------")
+        # print(valid_sentence)
+        sentence_tag = viterbi(valid_sentence)
+        tag_result.extend(sentence_tag)
+
+    # test = []
+    # for tag_loc in tag_out:
+    #     test.append(loc_to_tag[tag_loc])
+    # print(tag_out)
+    # print(test)
+    # return word_out, tag_out
+
+def viterbi(untagged_sentence):
+    global I
+    global M
+    if len(untagged_sentence) == 0:
+        print("----------empty sentence for viterbi-----------")
+        return
+    length_E = len(untagged_sentence)
+    prob = [[0] * total_tag for i in range(length_E)]  # row:length of word(E), col: tag
+    prev = [[0] * total_tag for i in range(length_E)]  # row:length of word(E), col: tag
+
+    # determine values for the first word in the sentence
+    for i in range(total_tag):
+        prob[0][i] = I[i] * M[i][word_to_loc[untagged_sentence[0]]]
+        prev[0][i] = None
+
+    # for the second word to the last word in sentence
+    # find each current state's most likely prior state x
+
+    for word_t in range(1, length_E):
+        word_loc = word_to_loc[untagged_sentence[word_t]]
+        for tag_i in range(total_tag):
+            max_prob = 0
+            max_index = -1
+            for pre_tag_i in range(total_tag):
+                current_prob = prob[word_t - 1][pre_tag_i] * T[pre_tag_i][tag_i] * M[tag_i][word_loc]
+                if current_prob > max_prob:
+                    max_prob = current_prob
+                    max_index = pre_tag_i
+            prob[word_t][tag_i] = max_prob
+            prev[word_t][tag_i] = max_index
+
+    #find the largest prob for the last word
+    last_word = length_E - 1
+    final_prob = 0
+    final_tag = -1
+    for tag_i in range (total_tag):
+        current = prob[last_word][tag_i]
+        if current > final_prob:
+            final_prob = current
+            final_tag = tag_i
+
+    tag_path = []
+    while not last_word == -1:
+        # print("last word is: " + str(last_word) + "final_tag is: " + str(final_tag))
+        tag_path.append(final_tag)
+        prev_tag = prev[last_word][final_tag]
+        # tag_path.append(prev_tag)
+        final_tag = prev_tag
+        last_word -= 1
+    tag_path.reverse() # reverse path to start from initial tag
+    return tag_path
+
+def write_output(word_result, tag_result, output_file):
+    assert (len(word_result) == len(tag_result))
+    if len(word_result) == 0:
+        return
+    with open(output_file, 'a') as f:
+        f.truncate(0)
+        for i, word in enumerate(word_result):
+            f.write(word)
+            f.write(" : ")
+            f.write(loc_to_tag[tag_result[i]])
+            f.write('\n')
+
 
 
 def tag(training_list, test_file, output_file):
@@ -182,6 +273,10 @@ def tag(training_list, test_file, output_file):
     # YOUR IMPLEMENTATION GOES HERE
     #
     training(training_list)
+    word_result = []
+    tag_result = []
+    prepare_viterbi(test_file, word_result, tag_result)
+    write_output(word_result, tag_result, output_file)
 
 if __name__ == '__main__':
     # Run the tagger function.
